@@ -1,0 +1,41 @@
+name: Daily auction scrape & digest
+
+# Standalone-repo version (this folder is the repository root).
+# Runs the full pipeline: scrape izsoles + City24 + SS.com, then email digests.
+# A real Ubuntu runner with a full Chromium browser and no serverless timeout,
+# which is why the izsoles browser scraper runs here rather than on Vercel.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # every day at 06:00 UTC (≈08:00–09:00 Riga time)
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: auction-daily
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run daily pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          SCHEDULER_ENABLED: "false"
+          MAX_LISTINGS_PER_SOURCE: "200"
+        run: npx tsx src/cli.ts pipeline

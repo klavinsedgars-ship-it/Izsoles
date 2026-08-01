@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Auction Tracker — Latvian real estate alerts</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262b34; --fg:#e7e9ee; --muted:#9aa2af; --accent:#4f86ff; --accent2:#2b6; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:18px; margin:0; }
+  header .badge { font-size:12px; color:var(--muted); border:1px solid var(--line); padding:3px 8px; border-radius:6px; }
+  main { max-width:1000px; margin:0 auto; padding:24px; }
+  .tabs { display:flex; gap:8px; margin-bottom:20px; }
+  .tabs button { background:var(--card); color:var(--muted); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; }
+  .tabs button.active { color:var(--fg); border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 4px; }
+  input, select { width:100%; background:#0f1319; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:120px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { font-size:12px; padding:4px 8px; border:1px solid var(--line); border-radius:20px; cursor:pointer; color:var(--muted); user-select:none; }
+  .chip.on { color:#fff; border-color:var(--accent); background:rgba(79,134,255,.15); }
+  button.primary { background:var(--accent); color:#fff; border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:600; }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); padding:8px 12px; border-radius:8px; cursor:pointer; }
+  button.danger { color:#ff6b6b; border-color:#552; background:transparent; }
+  .listing { display:flex; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .listing:last-child { border-bottom:none; }
+  .listing a { color:var(--fg); text-decoration:none; font-weight:600; }
+  .listing .meta { color:var(--muted); font-size:13px; margin-top:3px; }
+  .price { font-weight:700; white-space:nowrap; }
+  .src { font-size:11px; color:var(--muted); background:#0f1319; border:1px solid var(--line); padding:2px 6px; border-radius:5px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .toolbar { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  h3 { margin:4px 0 12px; }
+  .hidden { display:none; }
+  .search-item { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .search-item .crit { font-size:13px; color:var(--muted); margin-top:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏠 Auction Tracker</h1>
+  <span class="badge" id="metaBadge">…</span>
+</header>
+<main>
+  <div class="tabs">
+    <button data-tab="searches" class="active">Saved searches</button>
+    <button data-tab="listings">Listings</button>
+    <button data-tab="history">Sent history</button>
+  </div>
+
+  <!-- SEARCHES -->
+  <section id="tab-searches">
+    <div class="card">
+      <h3 id="formTitle">New saved search</h3>
+      <input type="hidden" id="editId" />
+      <div class="row">
+        <div><label>Name</label><input id="f-name" placeholder="e.g. Riga flats under 60k" /></div>
+        <div><label>Email for alerts</label><input id="f-email" placeholder="you@example.com" /></div>
+      </div>
+
+      <label>Sources</label>
+      <div class="chips" id="f-sources"></div>
+
+      <label>Listing type</label>
+      <div class="chips" id="f-kinds"></div>
+
+      <label>Property type</label>
+      <div class="chips" id="f-ptypes"></div>
+
+      <label>Cities / regions (comma separated)</label>
+      <input id="f-cities" placeholder="Rīga, Jūrmala, Jelgava" />
+
+      <div class="row">
+        <div><label>Price min €</label><input id="f-priceMin" type="number" /></div>
+        <div><label>Price max €</label><input id="f-priceMax" type="number" /></div>
+        <div><label>Area min m²</label><input id="f-areaMin" type="number" /></div>
+        <div><label>Area max m²</label><input id="f-areaMax" type="number" /></div>
+      </div>
+      <div class="row">
+        <div><label>Rooms min</label><input id="f-roomsMin" type="number" /></div>
+        <div><label>Rooms max</label><input id="f-roomsMax" type="number" /></div>
+        <div><label>Keywords (comma separated)</label><input id="f-keywords" placeholder="balcony, renovated" /></div>
+      </div>
+      <div class="toolbar" style="margin-top:16px">
+        <button class="primary" id="saveBtn">Save search</button>
+        <button class="ghost hidden" id="cancelEdit">Cancel</button>
+      </div>
+    </div>
+
+    <div id="searchList"></div>
+  </section>
+
+  <!-- LISTINGS -->
+  <section id="tab-listings" class="hidden">
+    <div class="toolbar">
+      <button class="ghost" onclick="triggerRun()">▶ Run scrape now</button>
+      <button class="ghost" onclick="triggerDigest()">✉ Send digest now</button>
+      <select id="srcFilter" style="max-width:200px" onchange="loadListings()">
+        <option value="">All sources</option>
+      </select>
+    </div>
+    <div class="card"><div id="listings"><p class="muted">Loading…</p></div></div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="tab-history" class="hidden">
+    <div class="card"><div id="history"><p class="muted">Loading…</p></div></div>
+  </section>
+</main>
+
+<script>
+const SOURCES = { izsoles: "izsoles.ta.gov.lv", city24: "City24", ss: "SS.com" };
+const KINDS = { auction: "Auction", sale: "For sale", rent: "For rent" };
+const PTYPES = { apartment:"Apartment", house:"House", land:"Land", commercial:"Commercial", garage:"Garage", other:"Other" };
+const sel = { sources:new Set(), kinds:new Set(), ptypes:new Set() };
+
+function chip(container, key, label, bucket) {
+  const el = document.createElement("span");
+  el.className = "chip"; el.textContent = label; el.dataset.key = key;
+  el.onclick = () => { el.classList.toggle("on"); bucket.has(key) ? bucket.delete(key) : bucket.add(key); };
+  container.appendChild(el);
+}
+function renderChips() {
+  const s = document.getElementById("f-sources"); s.innerHTML="";
+  Object.entries(SOURCES).forEach(([k,v]) => chip(s,k,v,sel.sources));
+  const kd = document.getElementById("f-kinds"); kd.innerHTML="";
+  Object.entries(KINDS).forEach(([k,v]) => chip(kd,k,v,sel.kinds));
+  const p = document.getElementById("f-ptypes"); p.innerHTML="";
+  Object.entries(PTYPES).forEach(([k,v]) => chip(p,k,v,sel.ptypes));
+}
+function csv(id){ const v=document.getElementById(id).value.trim(); return v? v.split(",").map(x=>x.trim()).filter(Boolean):[]; }
+function numOrNull(id){ const v=document.getElementById(id).value; return v===""?null:Number(v); }
+function euro(n){ return n==null? "—" : "€"+Number(n).toLocaleString("en-US"); }
+
+async function api(path, opts){ const r = await fetch("/api"+path, opts); if(!r.ok && r.status!==204) throw new Error((await r.json()).error||r.statusText); return r.status===204?null:r.json(); }
+
+function collectForm(){
+  return {
+    name: document.getElementById("f-name").value.trim(),
+    email: document.getElementById("f-email").value.trim(),
+    sources:[...sel.sources], listingKinds:[...sel.kinds], propertyTypes:[...sel.ptypes],
+    cities: csv("f-cities"), keywords: csv("f-keywords"),
+    priceMin:numOrNull("f-priceMin"), priceMax:numOrNull("f-priceMax"),
+    areaMin:numOrNull("f-areaMin"), areaMax:numOrNull("f-areaMax"),
+    roomsMin:numOrNull("f-roomsMin"), roomsMax:numOrNull("f-roomsMax"),
+  };
+}
+function resetForm(){
+  ["f-name","f-email","f-cities","f-keywords","f-priceMin","f-priceMax","f-areaMin","f-areaMax","f-roomsMin","f-roomsMax"].forEach(i=>document.getElementById(i).value="");
+  sel.sources.clear(); sel.kinds.clear(); sel.ptypes.clear(); renderChips();
+  document.getElementById("editId").value=""; document.getElementById("formTitle").textContent="New saved search";
+  document.getElementById("cancelEdit").classList.add("hidden");
+}
+document.getElementById("cancelEdit").onclick = resetForm;
+
+document.getElementById("saveBtn").onclick = async () => {
+  const body = collectForm();
+  if(!body.name || !body.email){ alert("Name and email are required"); return; }
+  const id = document.getElementById("editId").value;
+  try {
+    if(id) await api("/searches/"+id,{method:"PUT",headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    else await api("/searches",{method:"POST",headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    resetForm(); loadSearches();
+  } catch(e){ alert("Error: "+e.message); }
+};
+
+function critSummary(s){
+  const parts=[];
+  if(s.sources.length) parts.push(s.sources.map(x=>SOURCES[x]||x).join("/"));
+  if(s.listingKinds.length) parts.push(s.listingKinds.map(x=>KINDS[x]).join("/"));
+  if(s.propertyTypes.length) parts.push(s.propertyTypes.map(x=>PTYPES[x]).join("/"));
+  if(s.cities.length) parts.push("in "+s.cities.join(", "));
+  if(s.priceMin!=null||s.priceMax!=null) parts.push(`€${s.priceMin??0}–${s.priceMax??"∞"}`);
+  if(s.roomsMin!=null||s.roomsMax!=null) parts.push(`${s.roomsMin??0}–${s.roomsMax??"∞"} rooms`);
+  if(s.keywords.length) parts.push('"'+s.keywords.join('", "')+'"');
+  return parts.join(" · ") || "no filters (matches everything)";
+}
+
+async function loadSearches(){
+  const rows = await api("/searches");
+  const box = document.getElementById("searchList");
+  if(!rows.length){ box.innerHTML='<p class="muted">No saved searches yet. Create one above.</p>'; return; }
+  box.innerHTML = rows.map(s => `
+    <div class="card search-item">
+      <div>
+        <strong>${s.name}</strong> ${s.active?"":'<span class="muted">(paused)</span>'}
+        <div class="crit">${critSummary(s)}</div>
+        <div class="muted" style="margin-top:4px">→ ${s.email}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="ghost" onclick='editSearch(${JSON.stringify(s)})'>Edit</button>
+        <button class="ghost danger" onclick="delSearch(${s.id})">Delete</button>
+      </div>
+    </div>`).join("");
+}
+window.editSearch = (s) => {
+  document.getElementById("editId").value=s.id;
+  document.getElementById("formTitle").textContent="Edit: "+s.name;
+  document.getElementById("f-name").value=s.name; document.getElementById("f-email").value=s.email;
+  document.getElementById("f-cities").value=(s.cities||[]).join(", ");
+  document.getElementById("f-keywords").value=(s.keywords||[]).join(", ");
+  const setNum=(i,v)=>document.getElementById(i).value=v??"";
+  setNum("f-priceMin",s.priceMin); setNum("f-priceMax",s.priceMax);
+  setNum("f-areaMin",s.areaMin); setNum("f-areaMax",s.areaMax);
+  setNum("f-roomsMin",s.roomsMin); setNum("f-roomsMax",s.roomsMax);
+  sel.sources=new Set(s.sources); sel.kinds=new Set(s.listingKinds); sel.ptypes=new Set(s.propertyTypes);
+  renderChips();
+  document.querySelectorAll("#f-sources .chip").forEach(c=>c.classList.toggle("on",sel.sources.has(c.dataset.key)));
+  document.querySelectorAll("#f-kinds .chip").forEach(c=>c.classList.toggle("on",sel.kinds.has(c.dataset.key)));
+  document.querySelectorAll("#f-ptypes .chip").forEach(c=>c.classList.toggle("on",sel.ptypes.has(c.dataset.key)));
+  document.getElementById("cancelEdit").classList.remove("hidden");
+  window.scrollTo({top:0,behavior:"smooth"});
+};
+window.delSearch = async (id) => { if(confirm("Delete this saved search?")){ await api("/searches/"+id,{method:"DELETE"}); loadSearches(); } };
+
+async function loadListings(){
+  const src = document.getElementById("srcFilter").value;
+  const rows = await api("/listings?limit=100"+(src?"&source="+src:""));
+  const box = document.getElementById("listings");
+  if(!rows.length){ box.innerHTML='<p class="muted">No listings collected yet. Click “Run scrape now” (works once deployed with internet access).</p>'; return; }
+  box.innerHTML = rows.map(l=>`
+    <div class="listing">
+      <div>
+        <a href="${l.url}" target="_blank" rel="noopener">${l.title||l.address||"Listing"}</a>
+        <div class="meta">${l.cityLabel||""} ${l.areaM2?("· "+l.areaM2+" m²"):""} ${l.rooms?("· "+l.rooms+" rooms"):""} <span class="src">${SOURCES[l.source]||l.source}</span></div>
+      </div>
+      <div class="price">${euro(l.price)}</div>
+    </div>`).join("");
+}
+async function loadHistory(){
+  const rows = await api("/history");
+  const box = document.getElementById("history");
+  if(!rows.length){ box.innerHTML='<p class="muted">Nothing sent yet.</p>'; return; }
+  box.innerHTML = rows.map(h=>`
+    <div class="listing">
+      <div>
+        <a href="${h.url||"#"}" target="_blank" rel="noopener">${h.title||"Listing"}</a>
+        <div class="meta">${h.searchName||"?"} → ${h.email||""} · <span class="src">${h.status}</span> ${SOURCES[h.source]||h.source||""}</div>
+      </div>
+      <div class="price">${euro(h.price)}</div>
+    </div>`).join("");
+}
+async function triggerRun(){ const b=event.target; b.disabled=true; b.textContent="Running…"; try{ const r=await api("/run",{method:"POST",headers:{'content-type':'application/json'},body:"{}"}); alert("Scrape done: "+JSON.stringify(r.results)); loadListings(); }catch(e){ alert("Error: "+e.message); } b.disabled=false; b.textContent="▶ Run scrape now"; }
+async function triggerDigest(){ try{ const r=await api("/digest",{method:"POST"}); alert("Digest: "+JSON.stringify(r)); loadHistory(); }catch(e){ alert("Error: "+e.message); } }
+
+// Tabs
+document.querySelectorAll(".tabs button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    ["searches","listings","history"].forEach(t=>document.getElementById("tab-"+t).classList.add("hidden"));
+    document.getElementById("tab-"+b.dataset.tab).classList.remove("hidden");
+    if(b.dataset.tab==="listings") loadListings();
+    if(b.dataset.tab==="history") loadHistory();
+  };
+});
+
+async function init(){
+  renderChips();
+  try {
+    const meta = await api("/meta");
+    document.getElementById("metaBadge").textContent =
+      (meta.emailConfigured?"email ✓":"email not configured") + " · daily "+meta.schedule;
+    const sf = document.getElementById("srcFilter");
+    meta.sources.forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=SOURCES[s]||s; sf.appendChild(o); });
+  } catch(e){ document.getElementById("metaBadge").textContent="API error"; }
+  loadSearches();
+}
+init();
+</script>
+</body>
+</html>
