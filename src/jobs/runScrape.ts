@@ -7,6 +7,14 @@ import { listingMatches } from "../core/match.js";
 
 const MAX = Number(process.env.MAX_LISTINGS_PER_SOURCE ?? 200);
 
+// Coerce to a safe DB value: a non-finite number (NaN/Infinity) from a scraper
+// must become null, or Postgres rejects the insert ("invalid input syntax for
+// type integer: NaN"). `int` rounds for integer columns; `flt` keeps decimals.
+const int = (v: number | undefined | null): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null;
+const flt = (v: number | undefined | null): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
 function toRow(s: ScrapedListing): NewListing {
   return {
     source: s.source,
@@ -20,17 +28,17 @@ function toRow(s: ScrapedListing): NewListing {
     cityLabel: s.cityLabel,
     district: s.district,
     address: s.address,
-    lat: s.lat,
-    lng: s.lng,
-    price: s.price,
+    lat: flt(s.lat),
+    lng: flt(s.lng),
+    price: int(s.price),
     currency: s.currency ?? "EUR",
-    pricePerM2: s.pricePerM2,
-    areaM2: s.areaM2,
-    rooms: s.rooms,
-    floor: s.floor,
+    pricePerM2: int(s.pricePerM2),
+    areaM2: flt(s.areaM2),
+    rooms: int(s.rooms),
+    floor: int(s.floor),
     auctionStart: s.auctionStart,
     auctionEnd: s.auctionEnd,
-    deposit: s.deposit,
+    deposit: int(s.deposit),
     cadastralNumber: s.cadastralNumber,
     imageUrl: s.imageUrl,
     raw: s.raw ?? null,

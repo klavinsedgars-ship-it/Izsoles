@@ -158,14 +158,27 @@ export const izsolesScraper: Scraper = {
         try {
           const url = resp.url();
           const ct = resp.headers()["content-type"] ?? "";
-          if (!ct.includes("application/json")) return;
-          if (!API_URL_HINT.test(url)) return;
+          // Inspect any JSON-ish response, or anything whose URL looks like an
+          // API — don't require both, since the real endpoint may not advertise
+          // a JSON content-type or match our keyword hint.
+          const isJson = ct.includes("json");
+          if (!isJson && !API_URL_HINT.test(url)) return;
           const body = await resp.json().catch(() => null);
           if (!body) return;
           const arr = findListingArray(body);
+          if (DEBUG) {
+            const topKeys =
+              body && typeof body === "object" && !Array.isArray(body)
+                ? Object.keys(body as Record<string, unknown>).slice(0, 12).join(",")
+                : Array.isArray(body)
+                  ? `array[${body.length}]`
+                  : typeof body;
+            log(`izsoles[debug] JSON ${resp.status()} ${url} :: {${topKeys}} arrayFound=${!!arr}`);
+          }
           if (arr) {
             captured.push(...arr);
-            if (DEBUG) debugDumps.push({ url, sample: arr[0] });
+            if (DEBUG)
+              debugDumps.push({ url, sample: arr[0] });
             log(`izsoles: captured ${arr.length} records from ${url}`);
           }
         } catch {

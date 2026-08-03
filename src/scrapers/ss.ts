@@ -89,8 +89,11 @@ function parseFeed(html: string, feed: SsFeed): ScrapedListing[] {
         rooms = Number(cell);
       } else if (/m²|m2|\d+\.\d/.test(cell) && areaM2 === undefined) {
         areaM2 = parseArea(cell);
-      } else if (/\d+\/\d+/.test(cell) && floor === undefined) {
-        floor = Number(cell.split("/")[0]);
+      } else if (floor === undefined) {
+        // Floor is shown as "current/total", e.g. "5/9". Extract just the
+        // leading number via regex so stray text never yields NaN.
+        const m = cell.match(/(\d+)\s*\/\s*\d+/);
+        if (m?.[1]) floor = Number(m[1]);
       }
     }
 

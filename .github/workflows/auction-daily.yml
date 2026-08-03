@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -45,4 +45,7 @@ jobs:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           SCHEDULER_ENABLED: "false"
           MAX_LISTINGS_PER_SOURCE: "200"
+          # Temporary: logs every JSON response izsoles sees, so we can identify
+          # its real data API from the run log. Remove once the mapping is confirmed.
+          IZSOLES_DEBUG: "1"
         run: npx tsx src/cli.ts pipeline

@@ -80,8 +80,20 @@ function mapRealty(r: Record<string, any>, q: City24Query): ScrapedListing | nul
 }
 
 async function fetchJson(url: string): Promise<unknown> {
+  // City24's API rejects bare requests (HTTP 403). Sending the same headers the
+  // browser app sends — notably Origin/Referer and sec-fetch-* — makes it look
+  // like a legitimate front-end call.
   const res = await fetch(url, {
-    headers: { "User-Agent": UA, Accept: "application/json", "Accept-Language": "lv,en;q=0.8" },
+    headers: {
+      "User-Agent": UA,
+      Accept: "application/json, text/plain, */*",
+      "Accept-Language": "lv,en;q=0.8",
+      Origin: "https://www.city24.lv",
+      Referer: "https://www.city24.lv/",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-site",
+    },
   });
   if (!res.ok) throw new Error(`City24 ${url} -> HTTP ${res.status}`);
   return res.json();
