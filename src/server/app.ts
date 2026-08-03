@@ -1,5 +1,5 @@
 import "dotenv/config";
-import express from "express";
+import express, { type Request, type Response, type NextFunction } from "express";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
@@ -22,6 +22,15 @@ export function createApp() {
   ];
   const publicDir = candidates.find((p) => existsSync(p));
   if (publicDir) app.use(express.static(publicDir));
+
+  // JSON error handler — keep API failures as parseable JSON (never an HTML
+  // platform error page) so the UI can show a real message.
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    const message = err instanceof Error ? err.message : "Internal server error";
+    console.error(`[api] ${req.method} ${req.url} ->`, err);
+    res.status(500).json({ error: message });
+  });
 
   return app;
 }

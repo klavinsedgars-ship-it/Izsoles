@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Auction Tracker — Latvian real estate alerts</title>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --line:#262b34; --fg:#e7e9ee; --muted:#9aa2af; --accent:#4f86ff; --accent2:#2b6; }
+  :root { --bg:#f6f7f9; --card:#ffffff; --line:#e3e6eb; --fg:#1a1d23; --muted:#697586; --accent:#2563eb; --accent2:#16a34a; --field:#ffffff; }
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--fg); }
   header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
@@ -18,7 +18,8 @@
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
   label { display:block; font-size:12px; color:var(--muted); margin:8px 0 4px; }
-  input, select { width:100%; background:#0f1319; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:14px; }
+  input, select { width:100%; background:var(--field); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:14px; }
+  input::placeholder { color:#aab2bf; }
   .row { display:flex; gap:10px; flex-wrap:wrap; }
   .row > div { flex:1; min-width:120px; }
   .chips { display:flex; flex-wrap:wrap; gap:6px; }
@@ -26,13 +27,13 @@
   .chip.on { color:#fff; border-color:var(--accent); background:rgba(79,134,255,.15); }
   button.primary { background:var(--accent); color:#fff; border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:600; }
   button.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); padding:8px 12px; border-radius:8px; cursor:pointer; }
-  button.danger { color:#ff6b6b; border-color:#552; background:transparent; }
+  button.danger { color:#dc2626; border-color:#f1c9c9; background:transparent; }
   .listing { display:flex; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
   .listing:last-child { border-bottom:none; }
   .listing a { color:var(--fg); text-decoration:none; font-weight:600; }
   .listing .meta { color:var(--muted); font-size:13px; margin-top:3px; }
   .price { font-weight:700; white-space:nowrap; }
-  .src { font-size:11px; color:var(--muted); background:#0f1319; border:1px solid var(--line); padding:2px 6px; border-radius:5px; }
+  .src { font-size:11px; color:var(--muted); background:#f2f4f7; border:1px solid var(--line); padding:2px 6px; border-radius:5px; }
   .muted { color:var(--muted); font-size:13px; }
   .toolbar { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
   h3 { margin:4px 0 12px; }
