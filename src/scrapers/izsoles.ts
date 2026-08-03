@@ -147,7 +147,18 @@ export const izsolesScraper: Scraper = {
       // serverless function) never pulls in the browser dependency. Only the
       // dedicated worker that actually runs izsoles needs Chromium installed.
       const { chromium } = await import("playwright");
-      browser = await chromium.launch({ headless: true });
+      try {
+        browser = await chromium.launch({ headless: true });
+      } catch (e) {
+        // No browser in this environment (e.g. Vercel serverless). izsoles is
+        // designed to run in the GitHub Actions worker; degrade gracefully
+        // instead of surfacing Playwright's raw "install browsers" banner.
+        log(
+          "izsoles: headless browser not available here — this source runs in the " +
+            `scheduled GitHub Actions worker. (${(e as Error).message.split("\n")[0]})`,
+        );
+        return [];
+      }
       const page = await browser.newPage({
         userAgent:
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",

@@ -139,8 +139,19 @@ api.post(
   "/run",
   ah(async (req, res) => {
     const source = req.body?.source as Source | undefined;
-    const results = source ? [await runSource(source)] : await runAll();
-    res.json({ results });
+    // On serverless (Vercel) there is no browser, so izsoles can't run here — it
+    // runs in the scheduled GitHub Actions worker. A manual "run all" from the
+    // web UI therefore covers only the browserless sources.
+    const serverless = Boolean(process.env.VERCEL);
+    const results = source
+      ? [await runSource(source)]
+      : await runAll(serverless ? (["city24", "ss"] as Source[]) : undefined);
+    res.json({
+      results,
+      ...(serverless && !source
+        ? { note: "izsoles runs in the scheduled GitHub Actions worker, not from this button." }
+        : {}),
+    });
   }),
 );
 
