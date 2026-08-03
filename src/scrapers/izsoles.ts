@@ -53,37 +53,54 @@ function parseLvDate(s: string | undefined): Date | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
-/** Map one auction card (from the listing page) to our normalized shape. */
-function mapCard(c: RawCard): ScrapedListing | null {
-  if (!c.id) return null;
-  const text = c.text ?? "";
+interface Detail {
+  rows: [string, string][];
+  address: string;
+  bodyText: string;
+}
 
-  // Starting price ("Sākumcena"), else the first EUR amount in the card text.
+function findRow(rows: [string, string][], ...keys: string[]): string | undefined {
+  for (const [k, v] of rows) {
+    const lk = k.toLowerCase();
+    if (keys.some((w) => lk.includes(w)) && v) return v;
+  }
+  return undefined;
+}
+
+/** Build a listing from an auction card plus its detail-page fields. */
+function mapAuction(c: RawCard, d: Detail | null): ScrapedListing | null {
+  if (!c.id) return null;
+  const rows = d?.rows ?? [];
+  const body = d?.bodyText ?? c.text ?? "";
+
+  // Starting price: prefer the "Sākumcena" info-row, else scan the page text.
   const priceRaw =
-    text.match(/s[āa]kumcena[^0-9]{0,20}([0-9][0-9\s.,]*)\s*(?:EUR|€)/i)?.[1] ??
-    text.match(/([0-9][0-9\s.,]{2,})\s*(?:EUR|€)/i)?.[1];
+    findRow(rows, "sākumcena", "sakumcena", "izsoles cena", "cena") ??
+    body.match(/s[āa]kumcena[^0-9]{0,25}([0-9][0-9\s.,]*)\s*(?:EUR|€)/i)?.[1];
   const price = parsePrice(priceRaw);
 
-  const start = text.match(/s[āa]kum[^0-9]{0,20}(\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?)/i)?.[1];
-  const end = text.match(
-    /nosl[ēe]gum[^0-9]{0,20}(\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?)/i,
-  )?.[1];
+  const deposit = parsePrice(findRow(rows, "nodrošin", "nodrosin"));
+  const cadastralNumber = findRow(rows, "kadastr");
+  const start = findRow(rows, "izsoles sākums", "sākums", "sakums");
+  const end = findRow(rows, "noslēgum", "noslegum", "beigu");
 
-  // Title/address: the link text is usually the object name/address.
-  const title = c.title || text.slice(0, 120) || undefined;
+  const title = c.title || d?.address || body.slice(0, 120) || undefined;
+  const address = d?.address || c.title || undefined;
 
   return {
     source: "izsoles",
     externalId: c.id,
     url: c.url,
     listingKind: "auction",
-    propertyType: guessPropertyType(`${title ?? ""} ${text}`),
+    propertyType: guessPropertyType(`${title ?? ""} ${body}`),
     title,
-    address: title,
+    address,
     price,
+    deposit,
+    cadastralNumber,
     auctionStart: parseLvDate(start),
     auctionEnd: parseLvDate(end),
-    raw: c,
+    raw: { card: c, rows },
   };
 }
 
@@ -112,6 +129,23 @@ const COLLECT_JS = `(() => {
     });
   }
   return out;
+})()`;
+
+// Extracts the structured detail fields from an auction detail page.
+const DETAIL_JS = `(() => {
+  const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+  const rows = [];
+  document.querySelectorAll('.info-row').forEach(r => {
+    const k = norm((r.querySelector('.info-parameter') || {}).textContent);
+    const v = norm((r.querySelector('.info-value') || {}).textContent);
+    if (k) rows.push([k, v]);
+  });
+  const bc = document.querySelector('.breadcrumb li.info, .breadcrumb .info');
+  return {
+    rows,
+    address: bc ? norm(bc.textContent) : '',
+    bodyText: norm(document.body ? document.body.innerText : '').slice(0, 4000),
+  };
 })()`;
 
 export const izsolesScraper: Scraper = {
@@ -176,18 +210,31 @@ export const izsolesScraper: Scraper = {
 
       const cards = ((await page.evaluate(COLLECT_JS).catch(() => [])) as RawCard[]) ?? [];
       log(`izsoles: found ${cards.length} auction links on ${page.url()}`);
-      if (DEBUG && cards[0]) log(`izsoles[debug] sample card: ${JSON.stringify(cards[0]).slice(0, 700)}`);
 
+      // Dedup and visit each auction's detail page for structured fields
+      // (starting price, dates, cadastre). Bounded so a run stays quick.
       const seen = new Set<string>();
+      const targets = cards.filter((c) => c.id && !seen.has(c.id) && seen.add(c.id));
+      const limit = Math.min(targets.length, ctx.maxListings, 60);
+
       const out: ScrapedListing[] = [];
-      for (const c of cards) {
-        const mapped = mapCard(c);
-        if (!mapped || seen.has(mapped.externalId)) continue;
-        seen.add(mapped.externalId);
-        out.push(mapped);
-        if (out.length >= ctx.maxListings) break;
+      for (let i = 0; i < limit; i++) {
+        const c = targets[i]!;
+        let detail: Detail | null = null;
+        try {
+          await page.goto(c.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+          detail = (await page.evaluate(DETAIL_JS).catch(() => null)) as Detail | null;
+        } catch (e) {
+          log(`izsoles: detail failed for ${c.id} (${(e as Error).message})`);
+        }
+        if (DEBUG && i === 0 && detail) {
+          log(`izsoles[debug] sample detail rows: ${JSON.stringify(detail.rows).slice(0, 900)}`);
+        }
+        const mapped = mapAuction(c, detail);
+        if (mapped) out.push(mapped);
       }
 
+      log(`izsoles: mapped ${out.length} auctions (with detail)`);
       if (out.length === 0) {
         log("izsoles: no auction cards found — the listing markup may have changed.");
       }
