@@ -7,6 +7,21 @@ import { listingMatches } from "../core/match.js";
 
 const MAX = Number(process.env.MAX_LISTINGS_PER_SOURCE ?? 200);
 
+// Optional scrape-time price filter. Set SCRAPE_PRICE_MIN / SCRAPE_PRICE_MAX
+// (whole euros) to only store listings within a band — e.g. 10000–30000. A
+// listing with an unknown price is always kept (auctions may not list one yet).
+// This only affects what NEW listings are stored; existing rows are never
+// removed by scraping.
+const PRICE_MIN = process.env.SCRAPE_PRICE_MIN ? Number(process.env.SCRAPE_PRICE_MIN) : undefined;
+const PRICE_MAX = process.env.SCRAPE_PRICE_MAX ? Number(process.env.SCRAPE_PRICE_MAX) : undefined;
+
+function withinPriceFilter(s: ScrapedListing): boolean {
+  if (s.price == null || !Number.isFinite(s.price)) return true; // keep unknown-price
+  if (PRICE_MIN != null && s.price < PRICE_MIN) return false;
+  if (PRICE_MAX != null && s.price > PRICE_MAX) return false;
+  return true;
+}
+
 // Coerce to a safe DB value: a non-finite number (NaN/Infinity) from a scraper
 // must become null, or Postgres rejects the insert ("invalid input syntax for
 // type integer: NaN"). `int` rounds for integer columns; `flt` keeps decimals.
@@ -124,10 +139,17 @@ export async function runSource(source: Source): Promise<SourceRunResult> {
   const [run] = await db.insert(scrapeRuns).values({ source, status: "running" }).returning();
 
   try {
-    const scraped = await scraper.scrape({
+    const scrapedAll = await scraper.scrape({
       maxListings: MAX,
       log: (m) => console.log(`[${source}] ${m}`),
     });
+    const scraped = scrapedAll.filter(withinPriceFilter);
+    if (scraped.length !== scrapedAll.length) {
+      console.log(
+        `[${source}] price filter kept ${scraped.length}/${scrapedAll.length} ` +
+          `(min=${PRICE_MIN ?? "-"} max=${PRICE_MAX ?? "-"})`,
+      );
+    }
     const inserted = await upsertListings(source, scraped);
     const queued = await queueNotifications(inserted);
 

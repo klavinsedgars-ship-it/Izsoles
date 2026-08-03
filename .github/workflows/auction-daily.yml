@@ -45,6 +45,10 @@ jobs:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           SCHEDULER_ENABLED: "false"
           MAX_LISTINGS_PER_SOURCE: "200"
+          # Only store listings in this price band (whole euros). Change or remove
+          # these to widen/disable the filter. Listings with no price are kept.
+          SCRAPE_PRICE_MIN: "10000"
+          SCRAPE_PRICE_MAX: "30000"
           # Temporary: logs every JSON response izsoles sees, so we can identify
           # its real data API from the run log. Remove once the mapping is confirmed.
           IZSOLES_DEBUG: "1"

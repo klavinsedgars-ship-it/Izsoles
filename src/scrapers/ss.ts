@@ -67,6 +67,18 @@ function parseFeed(html: string, feed: SsFeed): ScrapedListing[] {
     const url = href.startsWith("http") ? href : `https://www.ss.com${href}`;
     const title = link.text().trim();
 
+    // Thumbnail image (SS rows carry a small preview). Prefer a larger variant
+    // when SS's `.th2`/`.t` thumbnail naming is present, else use it as-is.
+    const imgEl = row.find("img").first();
+    let imageUrl = imgEl.attr("src") || imgEl.attr("data-original") || undefined;
+    if (imageUrl) {
+      if (imageUrl.startsWith("//")) imageUrl = "https:" + imageUrl;
+      imageUrl = imageUrl.replace(/\.th2\.(jpg|jpeg|png)$/i, ".800.$1").replace(/\.t\.(jpg|jpeg|png)$/i, ".800.$1");
+    }
+
+    // Short description snippet, if the row exposes one.
+    const description = row.find(".msg_column, .d1, .dd_msg").first().text().trim() || undefined;
+
     // Collect the numeric-ish data cells (td.msga2-o) in order.
     const cells = row
       .find("td.msga2-o, td.msga2")
@@ -97,7 +109,12 @@ function parseFeed(html: string, feed: SsFeed): ScrapedListing[] {
       }
     }
 
+    // SS lists both the price and the price/m². The larger absolute value is the
+    // total price; derive €/m² from area when we have both.
     const price = priceCandidates.length ? Math.max(...priceCandidates) : undefined;
+    const smaller = priceCandidates.length > 1 ? Math.min(...priceCandidates) : undefined;
+    const pricePerM2 =
+      price && areaM2 ? Math.round(price / areaM2) : smaller && smaller < (price ?? Infinity) ? smaller : undefined;
 
     out.push({
       source: "ss",
@@ -106,12 +123,15 @@ function parseFeed(html: string, feed: SsFeed): ScrapedListing[] {
       listingKind: feed.listingKind,
       propertyType: feed.propertyType,
       title: title || undefined,
+      description,
       cityLabel: feed.cityLabel || undefined,
       address: title || undefined,
       price,
+      pricePerM2,
       areaM2,
       rooms,
       floor,
+      imageUrl,
       raw: { cells, feed: feed.url },
     });
   });
