@@ -49,7 +49,4 @@ jobs:
           # these to widen/disable the filter. Listings with no price are kept.
           SCRAPE_PRICE_MIN: "10000"
           SCRAPE_PRICE_MAX: "30000"
-          # Temporary: logs every JSON response izsoles sees, so we can identify
-          # its real data API from the run log. Remove once the mapping is confirmed.
-          IZSOLES_DEBUG: "1"
         run: npx tsx src/cli.ts pipeline
