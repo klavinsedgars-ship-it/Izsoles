@@ -92,7 +92,15 @@ async function upsertListings(source: Source, scraped: ScrapedListing[]): Promis
         lastSeenAt: now,
         price: row.price,
         pricePerM2: row.pricePerM2,
+        auctionStart: row.auctionStart,
         auctionEnd: row.auctionEnd,
+        // Refresh display fields so older rows pick up newly-scraped detail
+        // (e.g. image, dates) without needing to be re-inserted.
+        imageUrl: row.imageUrl ?? undefined,
+        title: row.title,
+        address: row.address,
+        deposit: row.deposit,
+        cadastralNumber: row.cadastralNumber,
       })
       .where(and(eq(listings.source, source), eq(listings.externalId, s.externalId)));
   }

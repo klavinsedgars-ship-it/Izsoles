@@ -37,6 +37,7 @@
   .litem { display:flex; gap:12px; align-items:flex-start; min-width:0; }
   .thumb { width:104px; height:78px; flex:none; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:#eef1f5; }
   .desc { color:var(--muted); font-size:12px; margin-top:4px; max-width:620px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta.auction { color:#b45309; margin-top:3px; }
   .src { font-size:11px; color:var(--muted); background:#f2f4f7; border:1px solid var(--line); padding:2px 6px; border-radius:5px; }
   .muted { color:var(--muted); font-size:13px; }
   .toolbar { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
@@ -141,6 +142,7 @@ function renderChips() {
 function csv(id){ const v=document.getElementById(id).value.trim(); return v? v.split(",").map(x=>x.trim()).filter(Boolean):[]; }
 function numOrNull(id){ const v=document.getElementById(id).value; return v===""?null:Number(v); }
 function euro(n){ return n==null? "—" : "€"+Number(n).toLocaleString("en-US"); }
+function fmtDate(s){ if(!s) return ""; const d=new Date(s); return isNaN(d.getTime())? "" : d.toLocaleDateString("lv-LV"); }
 
 async function api(path, opts){ const r = await fetch("/api"+path, opts); if(!r.ok && r.status!==204) throw new Error((await r.json()).error||r.statusText); return r.status===204?null:r.json(); }
 
@@ -243,10 +245,11 @@ async function loadListings(){
         <div style="min-width:0">
           <a href="${l.url}" target="_blank" rel="noopener">${l.title||l.address||"Listing"}</a>
           <div class="meta">${meta} <span class="src">${SOURCES[l.source]||l.source}</span></div>
+          ${(l.auctionStart||l.auctionEnd)?`<div class="meta auction">🔨 ${l.auctionStart?fmtDate(l.auctionStart):"?"} → ${l.auctionEnd?fmtDate(l.auctionEnd):"?"}</div>`:""}
           ${l.description?`<div class="desc">${l.description}</div>`:""}
         </div>
       </div>
-      <div class="price">${euro(l.price)}${l.pricePerM2?`<div class="ppm">${euro(l.pricePerM2)}/m²</div>`:""}</div>
+      <div class="price">${euro(l.price)}${l.pricePerM2?`<div class="ppm">${euro(l.pricePerM2)}/m²</div>`:""}${l.listingKind==="auction"?`<div class="ppm">starting price</div>`:""}</div>
     </div>`;
   }).join("");
 }

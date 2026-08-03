@@ -57,6 +57,7 @@ interface Detail {
   rows: [string, string][];
   address: string;
   bodyText: string;
+  image: string;
 }
 
 function findRow(rows: [string, string][], ...keys: string[]): string | undefined {
@@ -87,6 +88,9 @@ function mapAuction(c: RawCard, d: Detail | null): ScrapedListing | null {
   const title = c.title || d?.address || body.slice(0, 120) || undefined;
   const address = d?.address || c.title || undefined;
 
+  let imageUrl = d?.image || undefined;
+  if (imageUrl && imageUrl.startsWith("/")) imageUrl = `https://izsoles.ta.gov.lv${imageUrl}`;
+
   return {
     source: "izsoles",
     externalId: c.id,
@@ -100,6 +104,7 @@ function mapAuction(c: RawCard, d: Detail | null): ScrapedListing | null {
     cadastralNumber,
     auctionStart: parseLvDate(start),
     auctionEnd: parseLvDate(end),
+    imageUrl,
     raw: { card: c, rows },
   };
 }
@@ -141,10 +146,20 @@ const DETAIL_JS = `(() => {
     if (k) rows.push([k, v]);
   });
   const bc = document.querySelector('.breadcrumb li.info, .breadcrumb .info');
+  // Property image: prefer og:image, else the first non-asset content image.
+  const og = document.querySelector('meta[property="og:image"]');
+  let image = og ? (og.getAttribute('content') || '') : '';
+  if (!image) {
+    const imgs = Array.from(document.querySelectorAll('img'))
+      .map(i => i.getAttribute('src') || i.getAttribute('data-src') || '')
+      .filter(s => s && !/\\/static\\/|logo|icon|placeholder|sprite|\\.svg/i.test(s));
+    image = imgs[0] || '';
+  }
   return {
     rows,
     address: bc ? norm(bc.textContent) : '',
     bodyText: norm(document.body ? document.body.innerText : '').slice(0, 4000),
+    image,
   };
 })()`;
 
