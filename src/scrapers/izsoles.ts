@@ -233,8 +233,49 @@ export const izsolesScraper: Scraper = {
       }
       if (!loaded) throw new Error("could not load any izsoles entry URL (all 404/failed)");
 
-      // Give late XHRs a moment, and try to page through results if a "next" exists.
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(2000);
+
+      // The site is server-rendered (jQuery/Bootstrap): auctions live in HTML,
+      // not a JSON API. From the landing page, follow the "Nekustamā īpašuma
+      // izsoles" (real-estate auctions) link to the actual listing page.
+      const reHref = (await page
+        .evaluate(
+          `(() => {
+            const as = Array.from(document.querySelectorAll('a[href]'));
+            const a = as.find(x => /nekustam/i.test((x.textContent||'') + ' ' + (x.getAttribute('href')||'')));
+            return a ? a.href : null;
+          })()`,
+        )
+        .catch(() => null)) as string | null;
+      log(`izsoles: real-estate link = ${reHref}`);
+      if (reHref) {
+        try {
+          await page.goto(reHref, { waitUntil: "networkidle", timeout: 45_000 });
+        } catch (e) {
+          log(`izsoles: could not open ${reHref}: ${(e as Error).message}`);
+        }
+      }
+      await page.waitForTimeout(3000);
+
+      if (DEBUG) {
+        const dump = (await page
+          .evaluate(
+            `(() => {
+              const out = { url: location.href, title: document.title };
+              const as = Array.from(document.querySelectorAll('a[href]'))
+                .map(a => ({ h: a.getAttribute('href'), t: (a.textContent||'').trim().slice(0,50) }))
+                .filter(x => x.h && /\\d/.test(x.h) && !/static|\\.(js|css|png|jpe?g|svg|woff2?)/i.test(x.h));
+              out.linkCount = as.length;
+              out.links = as.slice(0, 10);
+              const card = Array.from(document.querySelectorAll('div,li,article,tr'))
+                .find(el => /(€|EUR|kumcena|Izsoles s)/i.test(el.textContent||''));
+              out.cardHtml = card ? card.outerHTML.replace(/\\s+/g,' ').slice(0, 1800) : '';
+              return out;
+            })()`,
+          )
+          .catch(() => null)) as unknown;
+        log(`izsoles[debug] listingPage=${JSON.stringify(dump)?.slice(0, 3200)}`);
+      }
 
       if (DEBUG) {
         const finalUrl = page.url();
