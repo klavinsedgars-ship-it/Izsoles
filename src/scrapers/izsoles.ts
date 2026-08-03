@@ -165,6 +165,16 @@ export const izsolesScraper: Scraper = {
         locale: "lv-LV",
       });
 
+      // Diagnostic: record every non-asset response (status + type + url) so a
+      // DEBUG run reveals the real data API — or a Cloudflare/challenge block.
+      const allResp: string[] = [];
+      page.on("response", (resp) => {
+        const u = resp.url();
+        const ct = resp.headers()["content-type"] ?? "";
+        if (/\.(png|jpe?g|gif|webp|svg|woff2?|ttf|css|ico)(\?|$)/i.test(u)) return;
+        allResp.push(`${resp.status()} ${ct.split(";")[0]} ${u}`);
+      });
+
       page.on("response", async (resp) => {
         try {
           const url = resp.url();
@@ -211,7 +221,25 @@ export const izsolesScraper: Scraper = {
       if (!loaded) throw new Error("could not load any izsoles entry URL");
 
       // Give late XHRs a moment, and try to page through results if a "next" exists.
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(4000);
+
+      if (DEBUG) {
+        const finalUrl = page.url();
+        const title = await page.title().catch(() => "?");
+        const bodyText = (
+          await page
+            .evaluate(() => (globalThis as { document?: { body?: { innerText?: string } } }).document?.body?.innerText ?? "")
+            .catch(() => "")
+        ).slice(0, 300);
+        const challenge = /just a moment|checking your browser|cloudflare|captcha|access denied|attention required/i.test(
+          `${title} ${bodyText}`,
+        );
+        log(`izsoles[debug] finalUrl=${finalUrl}`);
+        log(`izsoles[debug] title="${title}" challenge=${challenge}`);
+        log(`izsoles[debug] bodyText[0..300]="${bodyText.replace(/\s+/g, " ").trim()}"`);
+        log(`izsoles[debug] responses seen: ${allResp.length}`);
+        for (const r of allResp.slice(0, 40)) log(`izsoles[debug]   ${r}`);
+      }
 
       if (DEBUG && debugDumps.length) {
         await mkdir(join(process.cwd(), "debug")).catch(() => {});
