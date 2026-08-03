@@ -1,90 +1,35 @@
 import type { Browser } from "playwright";
-import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import type { Scraper, ScrapeContext, ScrapedListing } from "./types.js";
-import { parseArea, parsePrice } from "./types.js";
+import { parsePrice } from "./types.js";
 import type { PropertyType } from "../db/schema.js";
 
 /**
  * izsoles.ta.gov.lv — the official Latvian electronic auctions site.
  *
- * The site is a single-page app protected against naive HTTP scraping
- * (Cloudflare / bot checks), so we drive a real headless browser and, crucially,
- * INTERCEPT the JSON the frontend fetches for itself. That is far more robust
- * than scraping rendered HTML: even if the visual layout changes, the data API
- * tends to stay stable, and we don't have to guess CSS selectors.
- *
- * Because the exact API shape can only be confirmed against the live site (which
- * is unreachable from the build sandbox), the field mapping below is heuristic
- * and centralised in `mapRecord()`. Run once with IZSOLES_DEBUG=1 to dump the
- * raw discovered payloads to ./debug/ and finalise the mapping.
+ * The site is a server-rendered jQuery/Bootstrap app (there is no JSON API). The
+ * landing page lists auctions, each linking to a detail page at
+ * `/izsole/<uuid>`. We drive a headless browser (the site does not respond to
+ * plain HTTP the way a browser does), collect the auction links, and parse the
+ * summary text of each card. Fields are heuristic and centralised in mapCard().
  */
 
-// Real-estate auction category landing pages. The site groups
-// "Nekustamā īpašuma izsoles" (real-estate auctions) under these routes.
-// Candidate entry points, tried in order until one returns HTTP 200. The site
-// root boots the SPA (which fetches its own auction API — we intercept that), so
-// it's the reliable fallback even if the specific category routes change.
+// Entry points, tried in order until one returns HTTP 200. The site root lists
+// auctions; the specific category routes 404, so root is the reliable entry.
 const ENTRY_URLS = [
-  "https://izsoles.ta.gov.lv/izsoles?auction_type=1", // real-estate auctions filter
-  "https://izsoles.ta.gov.lv/izsoles",
-  "https://izsoles.ta.gov.lv/lv/izsoles",
-  "https://izsoles.ta.gov.lv/nekustamais-ipasums",
+  "https://izsoles.ta.gov.lv/nekustama-ipasuma-izsoles",
   "https://izsoles.ta.gov.lv/",
 ];
 
-// A response is considered a candidate listings payload if its URL matches this
-// and its body contains an array of objects that look like auction records.
-const API_URL_HINT = /(auction|izsol|lot|object|search|list|result)/i;
-
 const DEBUG = process.env.IZSOLES_DEBUG === "1";
 
-function looksLikeListingArray(value: unknown): value is Record<string, unknown>[] {
-  if (!Array.isArray(value) || value.length === 0) return false;
-  const sample = value[0];
-  if (typeof sample !== "object" || sample === null) return false;
-  const keys = Object.keys(sample).join(" ").toLowerCase();
-  // Heuristic: auction records mention a price, address, or dates.
-  return /(price|cena|sum|address|adrese|street|iela|date|datum|deadline|term|start|end)/.test(
-    keys,
-  );
-}
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-/** Recursively search a decoded JSON body for the first listing-like array. */
-function findListingArray(body: unknown, depth = 0): Record<string, unknown>[] | null {
-  if (depth > 6 || body == null) return null;
-  if (looksLikeListingArray(body)) return body;
-  if (Array.isArray(body)) {
-    for (const el of body) {
-      const found = findListingArray(el, depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof body === "object") {
-    for (const val of Object.values(body as Record<string, unknown>)) {
-      const found = findListingArray(val, depth + 1);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-function pick<T = unknown>(rec: Record<string, unknown>, keys: string[]): T | undefined {
-  for (const k of Object.keys(rec)) {
-    const lk = k.toLowerCase();
-    if (keys.some((want) => lk === want || lk.includes(want))) {
-      const v = rec[k];
-      if (v !== null && v !== "") return v as T;
-    }
-  }
-  return undefined;
-}
-
-function toDate(v: unknown): Date | undefined {
-  if (!v) return undefined;
-  const d = new Date(v as string);
-  return Number.isNaN(d.getTime()) ? undefined : d;
+interface RawCard {
+  id: string;
+  url: string;
+  title: string;
+  text: string;
 }
 
 function guessPropertyType(text: string | undefined): PropertyType | undefined {
@@ -92,50 +37,82 @@ function guessPropertyType(text: string | undefined): PropertyType | undefined {
   const t = text.toLowerCase();
   if (/dz[īi]vokl|apartment|flat/.test(t)) return "apartment";
   if (/m[āa]ja|house|savrupm/.test(t)) return "house";
-  if (/zeme|land|plot/.test(t)) return "land";
-  if (/komerc|birojs|commercial|office|veikal/.test(t)) return "commercial";
+  if (/zeme|land|plot|zemes/.test(t)) return "land";
+  if (/komerc|birojs|commercial|office|veikal|telp/.test(t)) return "commercial";
   if (/gar[āa]ža|garage/.test(t)) return "garage";
   return "other";
 }
 
-/** Heuristic mapping from a raw API record to our normalized shape. */
-function mapRecord(rec: Record<string, unknown>): ScrapedListing | null {
-  const id =
-    pick<string | number>(rec, ["id", "uuid", "guid", "number", "nr"]) ??
-    pick<string | number>(rec, ["code"]);
-  if (id == null) return null;
+/** Parse a Latvian date "dd.mm.yyyy" (optionally with time) into a Date. */
+function parseLvDate(s: string | undefined): Date | undefined {
+  if (!s) return undefined;
+  const m = s.match(/(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+  if (!m) return undefined;
+  const [, dd, mm, yyyy, hh = "0", min = "0"] = m;
+  const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min));
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
 
-  const title = pick<string>(rec, ["title", "name", "nosaukum", "heading"]);
-  const address = pick<string>(rec, ["address", "adrese", "location", "vieta"]);
-  const cityLabel = pick<string>(rec, ["city", "pilseta", "novads", "region", "municipal"]);
-  const priceRaw = pick(rec, ["startprice", "startingprice", "cena", "price", "sakumcena", "sum"]);
-  const areaRaw = pick(rec, ["area", "platiba", "size", "kvadrat"]);
-  const depositRaw = pick(rec, ["deposit", "nodrosinajum", "guarantee"]);
+/** Map one auction card (from the listing page) to our normalized shape. */
+function mapCard(c: RawCard): ScrapedListing | null {
+  if (!c.id) return null;
+  const text = c.text ?? "";
 
-  const url =
-    pick<string>(rec, ["url", "link", "permalink"]) ??
-    `https://izsoles.ta.gov.lv/nekustama-ipasuma-izsoles/${id}`;
+  // Starting price ("Sākumcena"), else the first EUR amount in the card text.
+  const priceRaw =
+    text.match(/s[āa]kumcena[^0-9]{0,20}([0-9][0-9\s.,]*)\s*(?:EUR|€)/i)?.[1] ??
+    text.match(/([0-9][0-9\s.,]{2,})\s*(?:EUR|€)/i)?.[1];
+  const price = parsePrice(priceRaw);
+
+  const start = text.match(/s[āa]kum[^0-9]{0,20}(\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?)/i)?.[1];
+  const end = text.match(
+    /nosl[ēe]gum[^0-9]{0,20}(\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?)/i,
+  )?.[1];
+
+  // Title/address: the link text is usually the object name/address.
+  const title = c.title || text.slice(0, 120) || undefined;
 
   return {
     source: "izsoles",
-    externalId: String(id),
-    url: url.startsWith("http") ? url : `https://izsoles.ta.gov.lv${url}`,
+    externalId: c.id,
+    url: c.url,
     listingKind: "auction",
-    propertyType: guessPropertyType(`${title ?? ""} ${pick<string>(rec, ["type", "veids"]) ?? ""}`),
-    title: title ?? address,
-    description: pick<string>(rec, ["description", "apraksts", "text"]),
-    cityLabel: cityLabel ?? undefined,
-    address: address ?? undefined,
-    price: parsePrice(priceRaw as string | number),
-    deposit: parsePrice(depositRaw as string | number),
-    areaM2: parseArea(areaRaw as string | number),
-    cadastralNumber: pick<string>(rec, ["cadastr", "kadastr"]),
-    auctionStart: toDate(pick(rec, ["start", "sakum", "begindate", "datefrom"])),
-    auctionEnd: toDate(pick(rec, ["end", "beigu", "enddate", "dateto", "deadline", "term"])),
-    imageUrl: pick<string>(rec, ["image", "photo", "attels", "thumbnail"]),
-    raw: rec,
+    propertyType: guessPropertyType(`${title ?? ""} ${text}`),
+    title,
+    address: title,
+    price,
+    auctionStart: parseLvDate(start),
+    auctionEnd: parseLvDate(end),
+    raw: c,
   };
 }
+
+// Collects every /izsole/<uuid> auction link on the current page along with the
+// text of its surrounding card. Runs inside the browser; returns plain data.
+const COLLECT_JS = `(() => {
+  const seen = new Set();
+  const out = [];
+  const links = Array.from(document.querySelectorAll('a[href*="/izsole/"]'));
+  for (const a of links) {
+    const href = a.getAttribute('href') || '';
+    const i = href.indexOf('/izsole/');
+    if (i < 0) continue;
+    const id = href.slice(i + 8).split(/[\\/?#]/)[0];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    let el = a, up = 0;
+    while (el.parentElement && (el.textContent || '').replace(/\\s+/g, ' ').trim().length < 60 && up < 6) {
+      el = el.parentElement; up++;
+    }
+    out.push({
+      id,
+      url: a.href,
+      title: (a.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 140),
+      text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500),
+    });
+  }
+  return out;
+})()`;
 
 export const izsolesScraper: Scraper = {
   source: "izsoles",
@@ -144,183 +121,75 @@ export const izsolesScraper: Scraper = {
   async scrape(ctx: ScrapeContext): Promise<ScrapedListing[]> {
     const log = ctx.log ?? console.log;
     let browser: Browser | undefined;
-    const captured: Record<string, unknown>[] = [];
-    const debugDumps: { url: string; sample: unknown }[] = [];
 
     try {
-      // Lazy-load Playwright so importing this module (e.g. inside a Vercel
-      // serverless function) never pulls in the browser dependency. Only the
-      // dedicated worker that actually runs izsoles needs Chromium installed.
       const { chromium } = await import("playwright");
       try {
         browser = await chromium.launch({ headless: true });
       } catch (e) {
-        // No browser in this environment (e.g. Vercel serverless). izsoles is
-        // designed to run in the GitHub Actions worker; degrade gracefully
-        // instead of surfacing Playwright's raw "install browsers" banner.
         log(
           "izsoles: headless browser not available here — this source runs in the " +
             `scheduled GitHub Actions worker. (${(e as Error).message.split("\n")[0]})`,
         );
         return [];
       }
-      const page = await browser.newPage({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        locale: "lv-LV",
-      });
-
-      // Diagnostic: record every non-asset response (status + type + url) so a
-      // DEBUG run reveals the real data API — or a Cloudflare/challenge block.
-      const allResp: string[] = [];
-      page.on("response", (resp) => {
-        const u = resp.url();
-        const ct = resp.headers()["content-type"] ?? "";
-        if (/\.(png|jpe?g|gif|webp|svg|woff2?|ttf|css|ico)(\?|$)/i.test(u)) return;
-        allResp.push(`${resp.status()} ${ct.split(";")[0]} ${u}`);
-      });
-
-      page.on("response", async (resp) => {
-        try {
-          const url = resp.url();
-          const ct = resp.headers()["content-type"] ?? "";
-          // Inspect any JSON-ish response, or anything whose URL looks like an
-          // API — don't require both, since the real endpoint may not advertise
-          // a JSON content-type or match our keyword hint.
-          const isJson = ct.includes("json");
-          if (!isJson && !API_URL_HINT.test(url)) return;
-          const body = await resp.json().catch(() => null);
-          if (!body) return;
-          const arr = findListingArray(body);
-          if (DEBUG) {
-            const topKeys =
-              body && typeof body === "object" && !Array.isArray(body)
-                ? Object.keys(body as Record<string, unknown>).slice(0, 12).join(",")
-                : Array.isArray(body)
-                  ? `array[${body.length}]`
-                  : typeof body;
-            log(`izsoles[debug] JSON ${resp.status()} ${url} :: {${topKeys}} arrayFound=${!!arr}`);
-          }
-          if (arr) {
-            captured.push(...arr);
-            if (DEBUG)
-              debugDumps.push({ url, sample: arr[0] });
-            log(`izsoles: captured ${arr.length} records from ${url}`);
-          }
-        } catch {
-          /* ignore individual response errors */
-        }
-      });
+      const page = await browser.newPage({ userAgent: UA, locale: "lv-LV" });
 
       let loaded = false;
       for (const entry of ENTRY_URLS) {
         try {
-          log(`izsoles: opening ${entry}`);
           const resp = await page.goto(entry, { waitUntil: "networkidle", timeout: 45_000 });
-          const status = resp?.status() ?? 0;
-          if (status >= 400) {
-            // goto does NOT throw on 404/5xx — the page still "loads". Skip these
-            // so we fall through to a URL that actually serves the app.
-            log(`izsoles: ${entry} returned HTTP ${status}; trying next entry`);
+          if ((resp?.status() ?? 0) >= 400) {
+            log(`izsoles: ${entry} returned HTTP ${resp?.status()}; trying next`);
             continue;
           }
-          log(`izsoles: loaded ${entry} (HTTP ${status})`);
+          log(`izsoles: loaded ${entry}`);
           loaded = true;
           break;
         } catch (e) {
-          log(`izsoles: ${entry} failed (${(e as Error).message}); trying next entry`);
+          log(`izsoles: ${entry} failed (${(e as Error).message}); trying next`);
         }
       }
-      if (!loaded) throw new Error("could not load any izsoles entry URL (all 404/failed)");
+      if (!loaded) throw new Error("could not load any izsoles entry URL");
+      await page.waitForTimeout(2500);
 
-      await page.waitForTimeout(2000);
-
-      // The site is server-rendered (jQuery/Bootstrap): auctions live in HTML,
-      // not a JSON API. From the landing page, follow the "Nekustamā īpašuma
-      // izsoles" (real-estate auctions) link to the actual listing page.
-      const reHref = (await page
+      // If the landing page links to a dedicated real-estate auctions list, open
+      // it to get the full set rather than only what's on the homepage.
+      const browseHref = (await page
         .evaluate(
           `(() => {
             const as = Array.from(document.querySelectorAll('a[href]'));
-            const a = as.find(x => /nekustam/i.test((x.textContent||'') + ' ' + (x.getAttribute('href')||'')));
-            return a ? a.href : null;
+            const a = as.find(x => /nekustam\\w* ?[īi]pa\\w* izsol/i.test(x.textContent || ''));
+            return a && a.href && a.href.indexOf('/izsole/') < 0 ? a.href : null;
           })()`,
         )
         .catch(() => null)) as string | null;
-      log(`izsoles: real-estate link = ${reHref}`);
-      if (reHref) {
+      if (browseHref) {
+        log(`izsoles: opening real-estate list ${browseHref}`);
         try {
-          await page.goto(reHref, { waitUntil: "networkidle", timeout: 45_000 });
+          await page.goto(browseHref, { waitUntil: "networkidle", timeout: 45_000 });
+          await page.waitForTimeout(2500);
         } catch (e) {
-          log(`izsoles: could not open ${reHref}: ${(e as Error).message}`);
+          log(`izsoles: could not open list ${browseHref}: ${(e as Error).message}`);
         }
       }
-      await page.waitForTimeout(3000);
 
-      if (DEBUG) {
-        const dump = (await page
-          .evaluate(
-            `(() => {
-              const out = { url: location.href, title: document.title };
-              const as = Array.from(document.querySelectorAll('a[href]'))
-                .map(a => ({ h: a.getAttribute('href'), t: (a.textContent||'').trim().slice(0,50) }))
-                .filter(x => x.h && /\\d/.test(x.h) && !/static|\\.(js|css|png|jpe?g|svg|woff2?)/i.test(x.h));
-              out.linkCount = as.length;
-              out.links = as.slice(0, 10);
-              const card = Array.from(document.querySelectorAll('div,li,article,tr'))
-                .find(el => /(€|EUR|kumcena|Izsoles s)/i.test(el.textContent||''));
-              out.cardHtml = card ? card.outerHTML.replace(/\\s+/g,' ').slice(0, 1800) : '';
-              return out;
-            })()`,
-          )
-          .catch(() => null)) as unknown;
-        log(`izsoles[debug] listingPage=${JSON.stringify(dump)?.slice(0, 3200)}`);
-      }
+      const cards = ((await page.evaluate(COLLECT_JS).catch(() => [])) as RawCard[]) ?? [];
+      log(`izsoles: found ${cards.length} auction links on ${page.url()}`);
+      if (DEBUG && cards[0]) log(`izsoles[debug] sample card: ${JSON.stringify(cards[0]).slice(0, 700)}`);
 
-      if (DEBUG) {
-        const finalUrl = page.url();
-        const title = await page.title().catch(() => "?");
-        const bodyText = (
-          await page
-            .evaluate(() => (globalThis as { document?: { body?: { innerText?: string } } }).document?.body?.innerText ?? "")
-            .catch(() => "")
-        ).slice(0, 300);
-        const challenge = /just a moment|checking your browser|cloudflare|captcha|access denied|attention required/i.test(
-          `${title} ${bodyText}`,
-        );
-        log(`izsoles[debug] finalUrl=${finalUrl}`);
-        log(`izsoles[debug] title="${title}" challenge=${challenge}`);
-        log(`izsoles[debug] bodyText[0..300]="${bodyText.replace(/\s+/g, " ").trim()}"`);
-        log(`izsoles[debug] responses seen: ${allResp.length}`);
-        for (const r of allResp.slice(0, 40)) log(`izsoles[debug]   ${r}`);
-      }
-
-      if (DEBUG && debugDumps.length) {
-        await mkdir(join(process.cwd(), "debug")).catch(() => {});
-        await writeFile(
-          join(process.cwd(), "debug", "izsoles-sample.json"),
-          JSON.stringify(debugDumps, null, 2),
-        );
-        log(`izsoles: wrote debug/izsoles-sample.json`);
-      }
-
-      // Dedup captured records by external id and map.
       const seen = new Set<string>();
       const out: ScrapedListing[] = [];
-      for (const rec of captured) {
-        const mapped = mapRecord(rec);
-        if (!mapped) continue;
-        if (seen.has(mapped.externalId)) continue;
+      for (const c of cards) {
+        const mapped = mapCard(c);
+        if (!mapped || seen.has(mapped.externalId)) continue;
         seen.add(mapped.externalId);
         out.push(mapped);
         if (out.length >= ctx.maxListings) break;
       }
 
       if (out.length === 0) {
-        log(
-          "izsoles: no records captured. The site likely changed its API or blocked the request. " +
-            "Run with IZSOLES_DEBUG=1 in a networked environment to inspect payloads.",
-        );
+        log("izsoles: no auction cards found — the listing markup may have changed.");
       }
       return out;
     } finally {
