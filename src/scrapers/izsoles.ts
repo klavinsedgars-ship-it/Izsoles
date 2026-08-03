@@ -22,9 +22,14 @@ import type { PropertyType } from "../db/schema.js";
 
 // Real-estate auction category landing pages. The site groups
 // "Nekustamā īpašuma izsoles" (real-estate auctions) under these routes.
+// Candidate entry points, tried in order until one returns HTTP 200. The site
+// root boots the SPA (which fetches its own auction API — we intercept that), so
+// it's the reliable fallback even if the specific category routes change.
 const ENTRY_URLS = [
-  "https://izsoles.ta.gov.lv/nekustama-ipasuma-izsoles",
-  "https://izsoles.ta.gov.lv/lv/nekustama-ipasuma-izsoles",
+  "https://izsoles.ta.gov.lv/izsoles?auction_type=1", // real-estate auctions filter
+  "https://izsoles.ta.gov.lv/izsoles",
+  "https://izsoles.ta.gov.lv/lv/izsoles",
+  "https://izsoles.ta.gov.lv/nekustamais-ipasums",
   "https://izsoles.ta.gov.lv/",
 ];
 
@@ -211,14 +216,22 @@ export const izsolesScraper: Scraper = {
       for (const entry of ENTRY_URLS) {
         try {
           log(`izsoles: opening ${entry}`);
-          await page.goto(entry, { waitUntil: "networkidle", timeout: 45_000 });
+          const resp = await page.goto(entry, { waitUntil: "networkidle", timeout: 45_000 });
+          const status = resp?.status() ?? 0;
+          if (status >= 400) {
+            // goto does NOT throw on 404/5xx — the page still "loads". Skip these
+            // so we fall through to a URL that actually serves the app.
+            log(`izsoles: ${entry} returned HTTP ${status}; trying next entry`);
+            continue;
+          }
+          log(`izsoles: loaded ${entry} (HTTP ${status})`);
           loaded = true;
           break;
         } catch (e) {
           log(`izsoles: ${entry} failed (${(e as Error).message}); trying next entry`);
         }
       }
-      if (!loaded) throw new Error("could not load any izsoles entry URL");
+      if (!loaded) throw new Error("could not load any izsoles entry URL (all 404/failed)");
 
       // Give late XHRs a moment, and try to page through results if a "next" exists.
       await page.waitForTimeout(4000);
